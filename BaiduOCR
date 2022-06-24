@@ -1,0 +1,175 @@
+/*
+首先，您需要去百度智能云上面申请一个APPID，当然包含相应的SecretKey。
+尚未申请的话，推荐参考这篇文章了解申请流程。
+https://blog.csdn.net/sunyong0814/article/details/122362502
+
+我相信，您有一定的ahk基础，所以gdip.ahk这个常用的脚本包，我就不附在这里啦。
+*/
+; 按住右侧shift，按住鼠标左键进行框选
+;
+; 我将这个脚本命名为【右手胡一刀之百度OCR】
+; 胡一刀系列的特点：每一个脚本都是独立的，但是每一个功能都是：右侧按一个键盘，比如Rctrl RAlt等，然后按住鼠标左键一划拉。一刀致命。
+;
+;;;;;;;;;;;;;;;;;;;;;;;;;;
+; ------------------------------------------
+	; #Include gdip_all.ahk     ;放在lib里面，或者放在本脚本的同一个目录下。
+	#NoEnv
+	DetectHiddenWindows On
+	gdip_startup()
+	; 首先申请一个百度api的appid，
+	自己申请的百度OCR之APPID:=""          ;请填入您自己的appid
+	自己申请的百度OCR之APPSecKey:=""      ;请填入您自己的密匙
+	;如果你没有申请，是出不了的，这种情况别问我
+
+
+RShift & Lbutton::
+	ocr:=setArea()
+	pBitmapocr := gdip_BitmapFromScreen(ocr.x "|" ocr.y "|" ocr.w "|" ocr.h)
+	B64 := UrlEncode(Gdip_EncodeBitmapTo64string(pBitmapocr))
+	ocrResult:= BaiduOCR(B64,自己申请的百度OCR之APPID,自己申请的百度OCR之APPSecKey) ;;;;;;;;;;;此处填写你自己的id，sec码，，，，，，，，，，，，，，，
+	oOcr:=Str_RegExMatchAll_tmp(ocrResult, "\{""words""\:(.*?)\}\}", ByRef oMatch:="")
+	ocrResult:=""
+	ocrResultLine:=0
+	for k,v in oOcr
+	{
+		word     := RegExReplace(v,".*(?<=\{""words""\:"")(.*)(?=""\,"").*","$1")
+		top      := RegExReplace(v,".*(?<=\{""top""\:)(.*)(?=\,""l).*","$1")
+		left     := RegExReplace(v,".*(?<=""left""\:)(.*)(?=\,""w).*","$1")
+		width    := RegExReplace(v,".*(?<=""width""\:)(.*)(?=\,""h).*","$1")
+		height   := RegExReplace(v,".*(?<=""height""\:)(.*)(?=\}\}).*","$1")
+		ocrResult .= Word "`n"
+		ocrResultLine++
+	}
+	Gui BaiduOCR: Destroy
+	Gui BaiduOCR: Color, White
+	Gui BaiduOCR: Font,  s12 cBlue ,微软雅黑
+	Gui BaiduOCR: +AlwaysOnTop +resize  +MinSize600x400 +LastFound
+	Gui BaiduOCR: Add,Edit,r%ocrResultLine% ReadOnly  -E0x200 -0x200000 vBaiduOCREdit +hwndhBaiduOCREdit,%ocrResult%
+    PostMessage, 0xB1, 0, 0, ,ahk_id %hBaiduOCREdit%
+	Gui BaiduOCR: show, ,百度文字识别-胡一刀
+	return
+BaiduOCR(img,client_id,client_secret) ;传入一个B64数据串
+{
+	whr := ComObjCreate("WinHttp.WinHttpRequest.5.1")
+	url:="https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id=" client_id "&client_secret=" client_secret "&"
+	whr.Open("Get", url)
+	whr.Send()
+	baidutoken:= whr.ResponseText  ;返回一个令牌
+	baidutoken:=RegExReplace(baidutoken,".*(?<=access_token""\:"")(.*?)(?=""\,""scope).*","$1")  ;按照格式提取令牌，此处用正则，可以用json，不懂
+	url:="https://aip.baidubce.com/rest/2.0/ocr/v1/accurate?access_token=" baidutoken   ;加上这个令牌再发请求
+	whr.Open("POST", url)
+	whr.Send("image=" img )      ;发送具体的数据
+	whr.WaitForResponse()  ;等待返回
+	oADO := ComObjCreate("adodb.stream")  ;返回的数据需要格式化，否则乱码，不懂。
+	oADO.Type := 1
+	oADO.Mode := 3
+	oADO.Open()
+	oADO.Write(whr.ResponseBody)
+	oADO.Position := 0
+	oADO.Type := 2
+	oADO.Charset := "UTF-8"
+	res := oADO.ReadText()
+	oADO.Close()
+	return res
+}
+UrlEncode(str, enc:="UTF-8")
+{
+	hex := "00"
+	fun := "msvcrt\swprintf"
+	VarSetCapacity(buff, size:=StrPut(str, enc))
+	StrPut(str, &buff, enc)
+	while(code:=NumGet(buff, A_Index - 1, "UChar")) && dllcall(fun, "str",hex, "str","%%%02X", "uchar",code, "cdecl")
+		r .= hex
+	return r
+}
+Gdip_EncodeBitmapTo64string(pBitmap, ext="jpg", Quality=75)
+{	;此函数来自vis，未做任何修改
+	if Ext not in BMP,DIB,RLE,JPG,JPEG,JPE,JFIF,GIF,TIF,TIFF,PNG
+	return -1
+	Extension := "." Ext
+	DllCall("gdiplus\GdipGetImageEncodersSize", "uint*", nCount, "uint*", nSize)
+	VarSetCapacity(ci, nSize)
+	DllCall("gdiplus\GdipGetImageEncoders", "uint", nCount, "uint", nSize, Ptr, &ci)
+	if !(nCount && nSize)
+	return -2
+	Loop, %nCount%
+	{
+		sString := StrGet(NumGet(ci, (idx := (48+7*A_PtrSize)*(A_Index-1))+32+3*A_PtrSize), "UTF-16")
+		if !InStr(sString, "*" Extension)
+		continue
+		pCodec := &ci+idx
+		break
+	}
+	if !pCodec
+	return -3
+	if (Quality != 75)
+	{
+		Quality := (Quality < 0) ? 0 : (Quality > 100) ? 100 : Quality
+		if Extension in .JPG,.JPEG,.JPE,.JFIF
+		{
+			DllCall("gdiplus\GdipGetEncoderParameterListSize", Ptr, pBitmap, Ptr, pCodec, "uint*", nSize)
+			VarSetCapacity(EncoderParameters, nSize, 0)
+			DllCall("gdiplus\GdipGetEncoderParameterList", Ptr, pBitmap, Ptr, pCodec, "uint", nSize, Ptr, &EncoderParameters)
+			Loop, % NumGet(EncoderParameters, "UInt")
+			{
+				elem := (24+(A_PtrSize ? A_PtrSize : 4))*(A_Index-1) + 4 + (pad := A_PtrSize = 8 ? 4 : 0)
+				if (NumGet(EncoderParameters, elem+16, "UInt") = 1) && (NumGet(EncoderParameters, elem+20, "UInt") = 6)
+				{
+					p := elem+&EncoderParameters-pad-4
+					NumPut(Quality, NumGet(NumPut(4, NumPut(1, p+0)+20, "UInt")), "UInt")
+					break
+				}
+			}
+		}
+	}
+	DllCall("ole32\CreateStreamOnHGlobal", "ptr",0, "int",true, "ptr*",pStream)
+	DllCall("gdiplus\GdipSaveImageToStream", "ptr",pBitmap, "ptr",pStream, "ptr",pCodec, "uint",p ? p : 0)
+	DllCall("ole32\GetHGlobalFromStream", "ptr",pStream, "uint*",hData)
+	pData := DllCall("GlobalLock", "ptr",hData, "uptr")
+	nSize := DllCall("GlobalSize", "uint",pData)
+	VarSetCapacity(Bin, nSize, 0)
+	DllCall("RtlMoveMemory", "ptr",&Bin , "ptr",pData , "uint",nSize)
+	DllCall("GlobalUnlock", "ptr",hData)
+	DllCall(NumGet(NumGet(pStream + 0, 0, "uptr") + (A_PtrSize * 2), 0, "uptr"), "ptr",pStream)
+	DllCall("GlobalFree", "ptr",hData)
+	DllCall("Crypt32.dll\CryptBinaryToString", "ptr",&Bin, "uint",nSize, "uint",0x01, "ptr",0, "uint*",base64Length)
+	VarSetCapacity(base64, base64Length*2, 0)
+	DllCall("Crypt32.dll\CryptBinaryToString", "ptr",&Bin, "uint",nSize, "uint",0x01, "ptr",&base64, "uint*",base64Length)
+	Bin := ""
+	VarSetCapacity(Bin, 0)
+	VarSetCapacity(base64, -1)
+	return base64
+}
+Str_RegExMatchAll_tmp(ByRef Haystack, NeedleRegEx, SubPat:="",startPos := 1)
+{
+    arr := []
+    while ( pos := RegExMatch(Haystack, NeedleRegEx, match, startPos) )
+    {
+        arr.push(match%SubPat%)
+        startPos := pos + StrLen(match)
+    }
+    return arr.MaxIndex() ? arr : ""
+}
+setarea(color:="FFFFFF",Trans:=100)
+{
+	CoordMode, Mouse, Screen
+	MouseGetPos, MX, MY
+	Gui SeeArea: +AlwaysOnTop -caption +Border +ToolWindow +LastFound +E0x02000000 +E0x00080000
+	WinSet Transparent, %Trans%
+	Gui SeeArea: color, %color%
+	Hotkey := RegExReplace(A_ThisHotkey,"^(\w* & |\W*)") ;这个正则，清除掉组合热键中的前面那个热键。以及所有非字符\W，剩下Lbutton 或 RButton等;ToolTip %hotkey%`n%A_ThisHotkey%
+	While, (GetKeyState(Hotkey, "p"))
+	{
+		Sleep, 20
+		MouseGetPos, MXend, MYend
+		w := abs(MX - MXend),
+		h := abs(MY - MYend)
+		X := (MX < MXend) ? MX : MXend
+		Y := (MY < MYend) ? MY : MYend
+		Gui SeeArea: Show, x%X% y%Y% w%w% h%h% NA
+	}
+	Gui SeeArea: Destroy
+	MouseGetPos, MXend, MYend
+	obj:={"x0":mx,"y0":my,"x1":mxend,"y1":myend,"x":x,"y":y,"w":w,"h":h}
+	return obj
+}
